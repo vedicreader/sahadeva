@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# pipeline outputs — regenerate with sd-ingest / sd-segment / sd-splits
+data/
+out/
+ckpt/
+*.wav
+!tests/fixtures/*.wav
+manifest*.jsonl

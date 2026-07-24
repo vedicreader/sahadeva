@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sahadeva"
+version = "0.0.1"
+description = "Sanskrit chant TTS — svara-aware text frontend, data pipeline, training and inference"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+    "indic-transliteration>=2.3.0",   # sanscript: Deva/SLP1/Kannada — same lib vagdhenu uses
+    "fastcore>=1.7.0",                # L, patch, Path.mk_write, str2bool
+    "numpy>=1.26",
+    "soundfile>=0.12.1",
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+# audio prep — needed for the segment/QC stages
+data = ["pyloudnorm>=0.1.1", "librosa>=0.10.2", "tinytag>=2.2.0"]
+# training — install torch separately per your CUDA/MPS build, it is not pinned here
+train = ["torch>=2.4", "torchaudio>=2.4", "accelerate>=1.0", "datasets>=3.0", "peft>=0.13"]
+dev = ["pytest>=8.0", "pytest-cov>=5.0"]
+
+[project.scripts]
+sd-ingest  = "sdata.ingest:main"
+sd-segment = "sdata.segment:main"
+sd-qc      = "sdata.qc:main"
+sd-splits  = "sdata.splits:main"
+sd-prep    = "train.prep_f5:main"
+sd-render  = "infer.render:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["dhvani", "sdata", "train", "infer", "sahaeval"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
