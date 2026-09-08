@@ -37,6 +37,7 @@ sd-fetch   = "sd.fetch:main"
 sd-build   = "sd.data:build"
 sd-train   = "sd.train:run"
 sd-eval    = "sd.eval:main"
+sd-smoke   = "scripts.smoke:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["dhvani", "sdata", "train", "infer", "sahaeval", "sd"]

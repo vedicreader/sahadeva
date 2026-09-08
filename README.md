@@ -33,6 +33,8 @@ sd-build          # clips -> phone tokens, per-token frame durations, log-mel, Q
 sd-train          # CPU training
 sd-eval           # test-set wavs + a self-contained original-vs-generated page
 
+python scripts/smoke.py   # 55s end-to-end plumbing check — run before any long training job
+
 # Track A
 sd-ingest --vr-root ../vedicreader --out data/manifest.jsonl
 sd-segment --manifest data/manifest.jsonl
