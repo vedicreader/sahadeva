@@ -37,20 +37,51 @@ def from_audio_alignment(corpus, entry, speaker, audio):
     return dict(source='audio_alignment', corpus=corpus, id=entry['id'], title=entry.get('name', entry['id']),
                 speaker=speaker, audio=str(audio), lines=lines)
 
-# === vedicreader lyrics XML ===
+# === vedicreader library content: lyrics XML or the JSON content format ===
+def _rec(x, audio, lines):
+    return dict(source='vedicreader', corpus='vedicreader', id=x.parent.name, title=x.parent.name,
+                speaker=f'{cfg.VR_SPK_PREFIX}_{x.parent.name}', audio=str(audio), lines=lines)
+
+def _xml_words(l):
+    "Word timings from the aligner's `<w>` children, when the published XML carries them."
+    out = [dict(t=_one(w.text), s=int(w.get('start_time_ms', 0)), e=int(w.get('end_time_ms', 0))) for w in l.iterfind('w')]
+    return [w for w in out if is_word(w['t']) and w['e'] > w['s']]
+
+def _one(t): return re.sub(r'\s+', ' ', t or '').strip()
+
 def from_vr_xml(xml_pth, audio, words=None):
-    "Build a record from a vedicreader lyrics XML; words: {alignment_id: [dict(t,s,e)]} from the enhanced aligner."
+    "Build a record from a vedicreader lyrics XML. Word timings come from `<w>` children, else from `words` by alignment_id."
     x = Path(xml_pth)
     root, lines = ET.parse(x).getroot(), []
     for l in root.iter('line'):
         aid = l.get('alignment_id')
         if aid is None or l.get('ignore') == 'true': continue
         s, e = int(l.get('start_time_ms', 0)), int(l.get('end_time_ms', 0))
-        t = re.sub(r'\s+', ' ', (l.text or '')).strip()
+        t = _one(l.text)
         if not (t and e > s): continue
-        lines.append(dict(i=len(lines), text=t, s=s, e=e, words=(words or {}).get(str(aid), [])))
-    return dict(source='vedicreader', corpus='vedicreader', id=x.parent.name, title=x.parent.name,
-                speaker=f'{cfg.VR_SPK_PREFIX}_{x.parent.name}', audio=str(audio), lines=lines)
+        lines.append(dict(i=len(lines), text=t, s=s, e=e, words=_xml_words(l) or (words or {}).get(str(aid), [])))
+    return _rec(x, audio, lines)
+
+def _json_words(l):
+    ws = [dict(t=_one(w[0]), s=int(w[1]), e=int(w[2])) if isinstance(w, (list, tuple))
+          else dict(t=_one(w.get('t')), s=int(w.get('s', 0)), e=int(w.get('e', 0))) for w in (l.get('w') or l.get('words') or [])]
+    return [w for w in ws if is_word(w['t']) and w['e'] > w['s']]
+
+def from_vr_json(json_pth, audio):
+    "Build a record from a vedicreader JSON content file; `heading` lines are printed, not recited."
+    x = Path(json_pth)
+    d, lines = json.loads(x.read_text(encoding='utf-8')), []
+    for sec in d.get('sections') or []:
+        for l in sec.get('lines') or []:
+            if str(l.get('role') or 'verse') in ('heading', 'skip'): continue
+            t, s, e = _one(l.get('t') or l.get('text')), int(l.get('s', 0)), int(l.get('e', 0))
+            if not (t and e > s): continue
+            lines.append(dict(i=len(lines), text=t, s=s, e=e, words=_json_words(l)))
+    return _rec(x, audio, lines)
+
+def from_vr(pth, audio, words=None):
+    "Read either vedicreader content format."
+    return from_vr_json(pth, audio) if str(pth).endswith('.json') else from_vr_xml(pth, audio, words)
 
 # === io ===
 def key(rec): return f"{rec['corpus']}__{re.sub(r'[^A-Za-z0-9._-]+', '_', rec['id'])}"
