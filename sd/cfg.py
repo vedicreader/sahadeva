@@ -35,6 +35,15 @@ LR          = 2e-3
 EPOCHS      = int(os.getenv('SD_EPOCHS', 80))
 SEED        = 1234
 
+# === source separation (audio_separator, run out-of-process like aeneas) ===
+SEP_PY    = os.getenv('SD_SEP_PY', '/home/user/.venv-sep/bin/python')
+SEP_DIR   = DATA / 'vocals'
+# forced-aligner calls load_model() with no args, so its model is audio_separator's default roformer.
+# UVR-MDX-NET-Inst_HQ_3.onnx is 6x faster on CPU and its vocals correlate 0.9989 with the roformer's
+# on this corpus, so it is the default here; set SD_SEP_MODEL to the roformer to match forced-aligner.
+SEP_MODEL = os.getenv('SD_SEP_MODEL', 'UVR-MDX-NET-Inst_HQ_3.onnx')
+SEP_ROFORMER = 'model_mel_band_roformer_ep_3005_sdr_11.4360.ckpt'
+
 # === corpora: (corpus, n_files, speaker) — n_files=0 skips, -1 takes all ===
 MANIFEST = [
     ('ramayana',        24, 'ghanapati'),
