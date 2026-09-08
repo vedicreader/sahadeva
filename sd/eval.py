@@ -1,5 +1,5 @@
 "Test-set evaluation: original vs generated audio, plus a self-contained comparison page."
-import base64, io, json, sys, time
+import base64, json, subprocess, sys
 import numpy as np, torch
 from pathlib import Path
 from . import cfg, data, synth
@@ -21,11 +21,20 @@ def _mcd(a, b):
     n = min(len(a), len(b))
     return float(np.abs(a[:n] - b[:n]).mean()) if n else float('nan')
 
-def evaluate(ck=None, out=None, limit=None, log=print):
+def pick(te, per_spk=None, limit=None):
+    "Subsample the held-out clips, keeping every reciter represented."
+    if per_spk:
+        seen, out = {}, []
+        for it in te:
+            if seen.get(it['speaker'], 0) < per_spk: seen[it['speaker']] = seen.get(it['speaker'], 0) + 1; out.append(it)
+        te = out
+    return te[:limit] if limit else te
+
+def evaluate(ck=None, out=None, limit=None, per_spk=3, log=print):
     "Write original / copy-synth / generated wavs per test clip and return per-clip metrics."
     m, mu, sd, spk = synth.load(ck)
     _, _, te, _ = data.load_split()
-    if limit: te = te[:limit]
+    te = pick(te, per_spk, limit)
     d = Path(out or cfg.OUT_DIR); d.mkdir(parents=True, exist_ok=True)
     orig, rows = originals(te), []
     for n, it in enumerate(te):
@@ -45,8 +54,15 @@ def evaluate(ck=None, out=None, limit=None, log=print):
     (d / 'metrics.json').write_text(json.dumps(rows, ensure_ascii=False, indent=1))
     return rows
 
-def _b64(p):
-    return 'data:audio/wav;base64,' + base64.b64encode(Path(p).read_bytes()).decode()
+def _b64(p, fmt='mp3'):
+    "Inline audio, transcoded to mp3 so a 30-clip page stays a few MB."
+    p = Path(p)
+    if fmt == 'mp3':
+        q = p.with_suffix('.mp3')
+        if not q.is_file():
+            subprocess.run(['ffmpeg', '-y', '-v', 'quiet', '-i', str(p), '-b:a', '64k', '-ac', '1', str(q)], check=True)
+        p = q
+    return f'data:audio/{"mpeg" if fmt == "mp3" else "wav"};base64,' + base64.b64encode(p.read_bytes()).decode()
 
 def page(rows=None, out=None, d=None):
     "One self-contained HTML file with every clip's audio inlined — openable offline."
@@ -76,7 +92,7 @@ def page(rows=None, out=None, d=None):
 def main():
     "sd-eval [--ck=path] [--limit=n] — synthesise the test set and write the comparison page."
     kw = dict(a.lstrip('-').split('=', 1) for a in sys.argv[1:] if '=' in a)
-    r = evaluate(ck=kw.get('ck'), limit=int(kw['limit']) if 'limit' in kw else None)
+    r = evaluate(ck=kw.get('ck'), limit=int(kw['limit']) if 'limit' in kw else None, per_spk=int(kw.get('per_spk', 3)))
     print('page →', page(r))
 
 if __name__ == '__main__': main()
