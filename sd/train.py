@@ -6,7 +6,7 @@ from . import cfg, data
 from .text import n_vocab
 from .model import Sahadeva
 
-__all__ = ['batches', 'norm_stats', 'run']
+__all__ = ['batches', 'norm_stats', 'one_cycle', 'run']
 
 def norm_stats(items):
     "Per-mel-bin mean/std over the training clips."
@@ -36,6 +36,13 @@ def batches(items, budget=cfg.BATCH_FRAMES, shuffle=True, seed=0):
     if shuffle: np.random.default_rng(seed).shuffle(out)
     return [[items[i] for i in b] for b in out]
 
+def one_cycle(step, total, lr=cfg.LR, warm=0.25, floor=0.02):
+    "One-cycle LR: linear warmup then cosine decay, stepped per batch rather than per epoch."
+    p = min(max(step / max(total, 1), 0.0), 1.0)
+    if p < warm: return lr * (0.02 + 0.98 * p / warm)
+    q = (p - warm) / max(1 - warm, 1e-9)
+    return lr * (floor + (1 - floor) * 0.5 * (1 + math.cos(math.pi * q)))
+
 def loss_fn(m, b):
     pre, post, logd, _ = m(b['tok'], b['spk'], b['dur'])
     fm, tm = b['fmask'][..., None], b['tmask']
@@ -58,13 +65,13 @@ def run(epochs=cfg.EPOCHS, out=None, threads=4, log=print, resume=True):
         st = torch.load(ck, map_location='cpu', weights_only=False)
         m.load_state_dict(st['model']); opt.load_state_dict(st['opt']); ep0, best = st['epoch'], st['best']
         mu, sd = st['mu'], st['sd']; log(f'resumed at epoch {ep0} (best {best:.4f})')
-    vb = batches(va, shuffle=False)
+    vb, nb_ep = batches(va, shuffle=False), len(batches(tr, shuffle=False))
     save = lambda e, b: torch.save(dict(model=m.state_dict(), opt=opt.state_dict(), epoch=e, best=b, mu=mu, sd=sd,
                                         spk=spk, cfg=dict(d=cfg.D_MODEL, n_mel=cfg.N_MEL)), ck)
     for ep in range(ep0, epochs):
         m.train(); t0, tot, nb = time.time(), 0.0, 0
-        for g in opt.param_groups: g['lr'] = cfg.LR * min(1, (ep + 1) / 3) * (0.5 * (1 + math.cos(math.pi * ep / epochs)))
-        for b in batches(tr, seed=ep):
+        for k, b in enumerate(batches(tr, seed=ep)):
+            for g in opt.param_groups: g['lr'] = one_cycle(ep * nb_ep + k, epochs * nb_ep)
             b = collate(b, mu, sd)
             loss, l1, ld = loss_fn(m, b)
             opt.zero_grad(); loss.backward()

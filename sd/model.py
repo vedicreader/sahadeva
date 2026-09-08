@@ -2,6 +2,11 @@
 import torch, torch.nn as nn, torch.nn.functional as F
 from . import cfg
 
+# Denormal floats cost ~7x on this model's backward pass, and this call must happen before the
+# first parallel op: OpenMP workers inherit MXCSR from the thread that spawns them, so setting it
+# later leaves every worker paying full denormal price. Measured 0.455 vs 3.503 s/step.
+torch.set_flush_denormal(True)
+
 __all__ = ['Sahadeva', 'expand']
 
 class ConvBlock(nn.Module):
