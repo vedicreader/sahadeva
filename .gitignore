@@ -1,4 +1,14 @@
-data/
-.venv/
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# pipeline outputs — regenerate with sd-fetch / sd-build / sd-train
+data/
+out/
+ckpt/
+*.wav
+!tests/fixtures/*.wav
+manifest*.jsonl

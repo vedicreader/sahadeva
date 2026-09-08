@@ -3,7 +3,7 @@ import json, math, sys, time
 import numpy as np, torch, torch.nn.functional as F
 from pathlib import Path
 from . import cfg, data
-from .g2p import n_vocab
+from .text import n_vocab
 from .model import Sahadeva
 
 __all__ = ['batches', 'norm_stats', 'run']

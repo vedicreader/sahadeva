@@ -1,24 +1,45 @@
-[project]
-name = "sahadeva"
-version = "0.1.0"
-description = "Sanskrit TTS trained on forced-aligned Vedic recitation"
-requires-python = ">=3.11"
-dependencies = [
-    "torch>=2.4",
-    "transformers>=4.44",
-    "soundfile>=0.12",
-    "numpy>=1.26",
-]
-
-[project.scripts]
-sd-fetch = "sd.fetch:main"
-sd-build = "sd.data:build"
-sd-train = "sd.train:run"
-sd-eval  = "sd.eval:main"
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[project]
+name = "sahadeva"
+version = "0.1.0"
+description = "Sanskrit chant TTS — svara-aware text frontend, forced-aligned corpus, training and inference"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+    "indic-transliteration>=2.3.0",   # sanscript: Deva/SLP1/Kannada — same lib vagdhenu uses
+    "fastcore>=1.7.0",
+    "numpy>=1.26",
+    "soundfile>=0.12.1",
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+data = ["pyloudnorm>=0.1.1", "librosa>=0.10.2", "tinytag>=2.2.0"]
+# Track B (trains here, CPU): from-scratch acoustic model + pretrained HiFi-GAN vocoder.
+# Track A (F5/IndicF5 fine-tune) needs a GPU and gated weights — see configs/finetune.md.
+train = ["torch>=2.4", "torchaudio>=2.4", "transformers>=4.44", "accelerate>=1.0", "datasets>=3.0", "peft>=0.13"]
+dev = ["pytest>=8.0", "pytest-cov>=5.0"]
+
+[project.scripts]
+# corpus (Track A lineage)
+sd-ingest  = "sdata.ingest:main"
+sd-segment = "sdata.segment:main"
+sd-qc      = "sdata.qc:main"
+sd-splits  = "sdata.splits:main"
+sd-prep    = "train.prep_f5:main"
+sd-render  = "infer.render:main"
+# forced alignment + Track B
+sd-fetch   = "sd.fetch:main"
+sd-build   = "sd.data:build"
+sd-train   = "sd.train:run"
+sd-eval    = "sd.eval:main"
+
 [tool.hatch.build.targets.wheel]
-packages = ["sd"]
+packages = ["dhvani", "sdata", "train", "infer", "sahaeval", "sd"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

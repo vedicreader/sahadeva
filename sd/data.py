@@ -1,9 +1,11 @@
 "Turn word-level alignments into training clips: phone tokens, per-token frame durations and log-mel targets."
 import json, subprocess, sys
+from functools import lru_cache
 import numpy as np
 from pathlib import Path
+from sdata.qc import measure_array, _rate_outliers, MIN_DUR, MAX_DUR, MAX_SILENCE_FRAC, MIN_SNR_DB, MAX_CLIP_FRAC
 from . import cfg, corpus
-from .g2p import g2p, tok2id, WT, SIL, SP, UNK
+from .text import phones, tok2id, WT, SIL, SP, UNK, n_aksharas
 
 __all__ = ['decode', 'clip_lines', 'clip_tokens', 'build', 'load_split', 'speakers']
 
@@ -22,10 +24,14 @@ def _split_words(ws, mx):
     return _split_words(ws[:k], mx) + _split_words(ws[k:], mx)
 
 def clip_lines(rec, mn=cfg.CLIP_MIN_MS, mx=cfg.CLIP_MAX_MS, join_gap=1200):
-    "Word groups that make good training clips: each within [mn, mx] ms where the audio allows."
+    """Word groups that make good training clips: each within [mn, mx] ms where the audio allows.
+
+    Words that transliterate to nothing (a bare danda that aeneas timed as its own fragment) are
+    dropped, so their span widens the neighbouring gap and becomes an explicit pause instead.
+    """
     groups, cur = [], []
     for l in rec['lines']:
-        ws = [w for w in l.get('words') or [] if w['e'] > w['s']]
+        ws = [w for w in l.get('words') or [] if w['e'] > w['s'] and _word_toks(w['t'])]
         if not ws: continue
         for piece in _split_words(ws, mx):
             if cur and (piece[0]['s'] - cur[-1]['e'] > join_gap or piece[-1]['e'] - cur[0]['s'] > mx):
@@ -36,14 +42,15 @@ def clip_lines(rec, mn=cfg.CLIP_MIN_MS, mx=cfg.CLIP_MAX_MS, join_gap=1200):
     return [g for g in groups if g and mn <= g[-1]['e'] - g[0]['s'] <= mx]
 
 # === tokens + durations ===
-def _word_toks(t): return g2p(t) or [UNK]
+@lru_cache(maxsize=1 << 16)
+def _word_toks(t): return tuple(phones(t))
 
 def clip_tokens(ws, pad=cfg.PAD_MS, gap_sil=cfg.GAP_SIL_MS):
     "Tokens and per-token millisecond durations for one clip, plus its audio span."
     s0, e1 = max(ws[0]['s'] - pad, 0), ws[-1]['e'] + pad
     toks, dur = [SIL], [ws[0]['s'] - s0]
     for i, w in enumerate(ws):
-        ph = _word_toks(w['t'])
+        ph = list(_word_toks(w['t']))
         wt = np.array([WT.get(x, 1.0) for x in ph], float); wt = wt if wt.sum() else np.ones(len(ph))
         span = max(w['e'] - w['s'], len(ph))
         toks += ph; dur += list(wt / wt.sum() * span)
@@ -88,7 +95,9 @@ def build(align_dir=None, out=None, log=print):
             if d is None or len(d) != len(t): continue
             mels.append(m.astype(np.float16)); mo.append(mo[-1] + len(m))
             toks += [tok2id.get(z, tok2id[UNK]) for z in t]; durs += list(d); to.append(len(toks))
-            meta.append(dict(s=int(s0), e=int(e1), text=' '.join(w['t'] for w in ws), nf=len(m), nt=len(t)))
+            txt = ' '.join(w['t'] for w in ws)
+            meta.append(dict(s=int(s0), e=int(e1), text=txt, nf=len(m), nt=len(t),
+                             qc=_qc(x[a:b], cfg.SR), n_aksharas=n_aksharas(txt)))
         if not mels: log(f'  skip {k}: no usable clips'); continue
         spk.setdefault(rec['speaker'], len(spk))
         np.savez(out / f'{k}.npz', mel=np.concatenate(mels), mel_off=np.array(mo), tok=np.array(toks, np.int16),
@@ -96,8 +105,39 @@ def build(align_dir=None, out=None, log=print):
         index.append(dict(key=k, speaker=rec['speaker'], corpus=rec['corpus'], title=rec['title'],
                           audio=rec['audio'], clips=meta))
         log(f'  {k}: {len(mels)} clips, {mo[-1]/cfg.FPS/60:.1f} min, {len(toks)} tokens')
+    qc_gate(index, log)
     (out / 'index.json').write_text(json.dumps(dict(speakers=spk, records=index), ensure_ascii=False))
-    log(f'{len(index)} records, {sum(len(r["clips"]) for r in index)} clips, {len(spk)} speakers → {out}')
+    n = sum(len(r['clips']) for r in index)
+    ok = sum(1 for r in index for c in r['clips'] if c['qc_pass'])
+    log(f'{len(index)} records, {n} clips ({ok} pass QC), {len(spk)} speakers → {out}')
+    return index
+
+# === QC (sdata.qc thresholds, applied to in-memory clips) ===
+def _qc(x, sr): return measure_array(np.asarray(x, np.float32), sr)
+
+def qc_gate(index, log=print):
+    """Flag clips rather than dropping them, so a threshold change never means re-cutting audio.
+
+    The speaking-rate outlier test is the useful one: an aksharas-per-second far from the
+    reciter's own median is the signature of a text/audio mismatch that survives good timings.
+    """
+    utts = [dict(id=f"{r['key']}#{i}", speaker_id=r['speaker'], n_aksharas=c['n_aksharas'],
+                 dur_s=c['qc'].get('dur_s') or (c['e'] - c['s']) / 1000, qc=c['qc'])
+            for r in index for i, c in enumerate(r['clips'])]
+    z = _rate_outliers(utts)
+    counts = {}
+    for u, (r, c) in zip(utts, [(r, c) for r in index for c in r['clips']]):
+        q = c['qc']; reasons = []
+        if 'error' in q: reasons.append(q['error'])
+        else:
+            if not (MIN_DUR <= q['dur_s'] <= MAX_DUR): reasons.append('duration')
+            if q['clip_frac'] > MAX_CLIP_FRAC: reasons.append('clipping')
+            if q['silence_frac'] > MAX_SILENCE_FRAC: reasons.append('silence')
+            if q['snr_db'] < MIN_SNR_DB: reasons.append('snr')
+            if z.get(u['id'], 0.0): reasons.append('speaking_rate')
+        c['qc']['rate_z'] = z.get(u['id'], 0.0); c['qc']['reasons'] = reasons; c['qc_pass'] = not reasons
+        for x in reasons: counts[x] = counts.get(x, 0) + 1
+    for k, v in sorted(counts.items(), key=lambda kv: -kv[1]): log(f'  QC fail {k:14}{v:>6}')
     return index
 
 def speakers(idx=None): return (idx or json.loads((Path(cfg.FEAT_DIR) / 'index.json').read_text()))['speakers']
@@ -114,6 +154,7 @@ def load_split(n_test=8, n_val=4, seed=cfg.SEED, feat_dir=None):
         z = np.load(d / f'{r["key"]}.npz')
         mel, mo, tk, to, du = z['mel'], z['mel_off'], z['tok'], z['tok_off'], z['dur']
         for i, c in enumerate(r['clips']):
+            if not c.get('qc_pass', True): continue
             items.append(dict(key=r['key'], ci=i, spk=idx['speakers'][r['speaker']], speaker=r['speaker'],
                               audio=r['audio'], text=c['text'], s=c['s'], e=c['e'],
                               mel=mel[mo[i]:mo[i + 1]], tok=tk[to[i]:to[i + 1]].astype(np.int64), dur=du[to[i]:to[i + 1]].astype(np.int64)))

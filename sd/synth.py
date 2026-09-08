@@ -2,7 +2,7 @@
 import numpy as np, torch
 from pathlib import Path
 from . import cfg
-from .g2p import g2p, tok2id, SIL, SP, UNK, n_vocab
+from .text import phones, tok2id, SIL, SP, UNK, n_vocab
 from .model import Sahadeva
 
 __all__ = ['load', 'text_tokens', 'mel_from_tokens', 'vocode', 'save_wav', 'Voice']
@@ -16,7 +16,7 @@ def text_tokens(text, gap=SIL):
     "Token ids for plain Devanagari text (no timings) — the duration predictor supplies the rhythm."
     out = [SIL]
     for w in (text or '').split():
-        p = g2p(w)
+        p = phones(w)
         if p: out += p + [gap]
     return np.array([tok2id.get(t, tok2id[UNK]) for t in (out or [SIL])], np.int64)
 
