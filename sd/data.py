@@ -142,7 +142,7 @@ def qc_gate(index, log=print):
 
 def speakers(idx=None): return (idx or json.loads((Path(cfg.FEAT_DIR) / 'index.json').read_text()))['speakers']
 
-def load_split(n_test=8, n_val=4, seed=cfg.SEED, feat_dir=None):
+def load_split(n_test=8, n_val=4, seed=cfg.SEED, feat_dir=None, speakers=None):
     """Load every clip into memory and split per speaker.
 
     Test clips are held out whole, so original-vs-generated is a fair comparison on unseen audio.
@@ -151,11 +151,12 @@ def load_split(n_test=8, n_val=4, seed=cfg.SEED, feat_dir=None):
     idx = json.loads((d / 'index.json').read_text())
     rng, items = np.random.default_rng(seed), []
     for r in idx['records']:
+        if speakers and r['speaker'] not in speakers: continue
         z = np.load(d / f'{r["key"]}.npz')
         mel, mo, tk, to, du = z['mel'], z['mel_off'], z['tok'], z['tok_off'], z['dur']
         for i, c in enumerate(r['clips']):
             if not c.get('qc_pass', True): continue
-            items.append(dict(key=r['key'], ci=i, spk=idx['speakers'][r['speaker']], speaker=r['speaker'],
+            items.append(dict(key=r['key'], ci=i, spk=sorted(speakers).index(r['speaker']) if speakers else idx['speakers'][r['speaker']], speaker=r['speaker'],
                               audio=r['audio'], text=c['text'], s=c['s'], e=c['e'],
                               mel=mel[mo[i]:mo[i + 1]], tok=tk[to[i]:to[i + 1]].astype(np.int64), dur=du[to[i]:to[i + 1]].astype(np.int64)))
     tr, va, te = [], [], []
