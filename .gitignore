@@ -9,6 +9,8 @@ venv/
 data/
 out/
 ckpt/
+# downloaded weights (vagdhenu ~3GB) — public on HF, fetch rather than store
+models/
 *.wav
 !tests/fixtures/*.wav
 manifest*.jsonl
